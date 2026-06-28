@@ -122,23 +122,28 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def process_link(update: Update, url: str):
-    """Enlace de reel/vídeo (Instagram, TikTok, YouTube, X…) -> baja, transcribe, valora y guarda."""
+    """Enlace de reel/vídeo (Instagram, TikTok, YouTube, X…) -> baja, transcribe, valora y guarda.
+    Va avisando en cada paso y borra el vídeo del disco en cuanto lo transcribe."""
     m = update.message
-    await m.reply_text("🔗 Recibido. Bajando el vídeo y transcribiendo…")
-    await m.chat.send_action("typing")
+    status = await m.reply_text("🔗 Recibido.\n📥 Bajando el vídeo…")
     d = tempfile.mkdtemp()
     try:
         path = await asyncio.to_thread(media.download_url, url, d)
+        await status.edit_text("✅ Vídeo bajado.\n🎙️ Transcribiendo el audio…")
         transcript = await asyncio.to_thread(media.transcribe, path)
+        # Ya tengo el texto: borro el vídeo para no cargar el disco.
+        shutil.rmtree(d, ignore_errors=True)
         if not transcript:
-            return await m.reply_text("No pude sacar transcripción de ese enlace.")
+            return await status.edit_text("No pude sacar transcripción de ese enlace.")
+        await status.edit_text("✅ Transcrito · 🗑️ vídeo borrado.\n🧠 Analizando si le sirve a la marca…")
         verdict = await asyncio.to_thread(rag.analyze_transcript, transcript)
         note = f"[Vídeo analizado · {url}]\n{verdict}\n\n— Transcripción —\n{transcript}"
         await asyncio.to_thread(store.add_note, note, "video")
-        await m.reply_text(verdict + "\n\n✅ Guardado en la memoria.")
+        await status.edit_text("✅ Análisis terminado 👇")
+        await m.reply_text(verdict + "\n\n✅ Guardado en la memoria · 🗑️ Vídeo borrado del servidor.")
     except Exception as e:
-        await m.reply_text(
-            "No pude con ese enlace. Si es de Instagram puede que pida login o sea privado; "
+        await status.edit_text(
+            "❌ No pude con ese enlace. Si es de Instagram puede que pida login o sea privado; "
             f"prueba a descargar el vídeo y mandármelo como archivo.\n({e})"
         )
     finally:
@@ -158,22 +163,29 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await m.reply_text(
             "⚠️ Pesa más de 20 MB y Telegram no me deja descargarlo. Mándame uno más corto."
         )
-    await m.reply_text("🎬 Recibido. Descargando y transcribiendo…")
-    await m.chat.send_action("typing")
+    status = await m.reply_text("🎬 Recibido.\n📥 Descargando…")
     tmp = tempfile.NamedTemporaryFile(suffix=".bin", delete=False)
     tmp.close()
     try:
         tf = await obj.get_file()
         await tf.download_to_drive(tmp.name)
+        await status.edit_text("✅ Descargado.\n🎙️ Transcribiendo el audio…")
         transcript = await asyncio.to_thread(media.transcribe, tmp.name)
+        # Ya tengo el texto: borro el vídeo para no cargar el disco.
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
         if not transcript:
-            return await m.reply_text("No pude sacar audio ni transcripción de ese archivo.")
+            return await status.edit_text("No pude sacar audio ni transcripción de ese archivo.")
+        await status.edit_text("✅ Transcrito · 🗑️ vídeo borrado.\n🧠 Analizando…")
         verdict = await asyncio.to_thread(rag.analyze_transcript, transcript)
         note = f"[Vídeo analizado]\n{verdict}\n\n— Transcripción —\n{transcript}"
         await asyncio.to_thread(store.add_note, note, "video")
-        await m.reply_text(verdict + "\n\n✅ Guardado en la memoria (te lo encontraré cuando preguntes).")
+        await status.edit_text("✅ Análisis terminado 👇")
+        await m.reply_text(verdict + "\n\n✅ Guardado en la memoria · 🗑️ Vídeo borrado del servidor.")
     except Exception as e:
-        await m.reply_text(f"Se me ha torcido procesando el vídeo: {e}")
+        await status.edit_text(f"❌ Se me ha torcido procesando el vídeo: {e}")
     finally:
         try:
             os.remove(tmp.name)
