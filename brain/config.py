@@ -36,3 +36,16 @@ GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
 
 # Cuántos turnos (ida + vuelta) de conversación recuerda el bot para poder debatir
 HISTORY_TURNS = int(os.getenv("HISTORY_TURNS", "8"))
+
+# --- Conexión al panel de admin del dashboard (celestialflowers) ---
+# URL base donde responde el API (/api/admin/...). Todo va por HTTPS.
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://dashboard.celestialflowers.es")
+# Contraseña del panel admin (la del config.php del dashboard). Solo en el .env del VPS.
+DASH_ADMIN_PASS = os.getenv("DASH_ADMIN_PASS", "")
+
+# --- 2FA por correo (para acciones de ESCRITURA/ENVÍO, Fase 2) ---
+OTP_EMAIL = os.getenv("OTP_EMAIL", "info@celestialflowers.es")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.hostinger.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
