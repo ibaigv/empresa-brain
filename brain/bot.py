@@ -28,7 +28,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import config, store, rag, media
+from . import config, store, rag, media, security
 
 # Historial de conversación por chat (para poder debatir con contexto).
 HISTORY = defaultdict(lambda: deque(maxlen=config.HISTORY_TURNS * 2))
@@ -56,6 +56,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "debatimos y tiro de lo que vamos guardando.\n\n"
         "• Mándame un *vídeo* (o reenvíame un reel) y lo transcribo, lo analizo y te digo "
         "si es útil para la marca.\n"
+        "• Pregúntame por la *tienda real*: ventas, pedidos, stock.\n"
+        "• Pídeme *cambios* (crear producto, guardar factura, correo a todos) — te pediré un "
+        "*código* que te llega al correo para confirmarlo.\n"
         "• /guardar <texto> — guardo una nota o estrategia en la memoria.\n"
         "• /buscar <texto> — te enseño de dónde sale la info.\n"
         "• /estado — cuánto conocimiento tengo guardado.\n"
@@ -108,13 +111,28 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (update.message.text or "").strip()
     if not msg:
         return
+    cid = update.effective_chat.id
+
+    # 1) ¿Es el código de verificación de una acción pendiente? (puerta determinista, en código)
+    if security.has_pending(cid) and security.looks_like_code(msg):
+        result, info = security.verify(cid, msg)
+        if result is None:
+            return await update.message.reply_text("🔐 " + info)
+        action_type, payload = result
+        await update.message.reply_text("🔐 Código correcto. Ejecutando…")
+        await update.message.chat.send_action("typing")
+        out = await asyncio.to_thread(rag.execute_pending, action_type, payload)
+        return await update.message.reply_text(out)
+
+    # 2) ¿Enlace de vídeo/reel?
     link = URL_RE.search(msg)
     if link:
         return await process_link(update, link.group(0))
-    cid = update.effective_chat.id
+
+    # 3) Conversación normal (si propone una escritura, pedirá código por correo)
     hist = list(HISTORY[cid])
     await update.message.chat.send_action("typing")
-    result = await asyncio.to_thread(rag.ask, msg, hist)
+    result = await asyncio.to_thread(rag.ask, msg, hist, cid)
     answer = result["answer"]
     HISTORY[cid].append({"role": "user", "content": msg})
     HISTORY[cid].append({"role": "assistant", "content": answer})

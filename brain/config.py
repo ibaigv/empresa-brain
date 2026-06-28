@@ -49,3 +49,5 @@ SMTP_HOST = os.getenv("SMTP_HOST", "smtp.hostinger.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
+# Secreto para hashear (HMAC) los códigos OTP. Largo y aleatorio, solo en el .env del VPS.
+OTP_SECRET = os.getenv("OTP_SECRET", "")

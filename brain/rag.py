@@ -9,7 +9,7 @@ Funciona con Groq (gratis) o Anthropic (de pago), según config.LLM_PROVIDER.
 """
 import json
 
-from . import config, store, web
+from . import config, store, web, security
 
 SYSTEM_PROMPT = (
     "Eres un miembro más del equipo de la empresa del usuario (marca Celestial: flores de CBD, "
@@ -46,6 +46,35 @@ TOOLS = [
         "description": "Lista de productos de la tienda (nombre, precio, stock). Úsalo para 'qué productos tengo', 'stock', 'qué hay en la tienda'.",
         "parameters": {"type": "object", "properties": {}},
     }},
+    # --- ESCRITURA: estas NO ejecutan; piden un código de verificación al dueño ---
+    {"type": "function", "function": {
+        "name": "crear_producto",
+        "description": "Crea un producto nuevo en la tienda. Requiere verificación por código. Úsalo cuando el dueño diga 'crea/sube el producto X'.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "Nombre del producto"},
+            "price": {"type": "number", "description": "Precio en €"},
+            "in_stock": {"type": "boolean", "description": "Si está disponible (por defecto sí)"},
+        }, "required": ["name", "price"]},
+    }},
+    {"type": "function", "function": {
+        "name": "guardar_factura",
+        "description": "Guarda una factura/gasto en la contabilidad. Requiere verificación por código. Úsalo cuando el dueño dé los datos de una factura o gasto.",
+        "parameters": {"type": "object", "properties": {
+            "date": {"type": "string", "description": "Fecha YYYY-MM-DD"},
+            "concept": {"type": "string", "description": "Concepto (incluye coste/gramo si lo calculas)"},
+            "amount": {"type": "number", "description": "Importe total en €"},
+            "vat": {"type": "number", "description": "IVA en € (0 si no aplica)"},
+            "supplier": {"type": "string", "description": "Proveedor"},
+        }, "required": ["date", "concept", "amount"]},
+    }},
+    {"type": "function", "function": {
+        "name": "enviar_campania",
+        "description": "Envía un correo a TODOS los suscriptores/clientes. Requiere verificación por código. Úsalo cuando el dueño diga 'manda un correo a todos'.",
+        "parameters": {"type": "object", "properties": {
+            "subject": {"type": "string", "description": "Asunto"},
+            "html": {"type": "string", "description": "Cuerpo del correo (texto/HTML)"},
+        }, "required": ["subject", "html"]},
+    }},
 ]
 
 _dash = None
@@ -58,7 +87,35 @@ def _dashboard():
     return _dash
 
 
-def _dispatch_tool(name: str, args: dict):
+# Acciones de ESCRITURA: pasan por verificación OTP; NUNCA se ejecutan en el dispatcher.
+_WRITE_ACTIONS = {"crear_producto", "guardar_factura", "enviar_campania"}
+
+
+def _describe(name: str, args: dict) -> str:
+    if name == "crear_producto":
+        return f"CREAR producto «{args.get('name', '')}» a {args.get('price', '?')}€"
+    if name == "guardar_factura":
+        return (f"GUARDAR factura/gasto: {args.get('concept', '')} · {args.get('amount', '?')}€ "
+                f"({args.get('supplier', '') or 's/proveedor'}, {args.get('date', '')})")
+    if name == "enviar_campania":
+        return f"ENVIAR correo a TODOS — asunto: «{args.get('subject', '')}»"
+    return name
+
+
+def _dispatch_tool(name: str, args: dict, chat_id):
+    # Escritura -> NO se ejecuta: crea acción pendiente y manda el código al correo.
+    if name in _WRITE_ACTIONS:
+        desc = _describe(name, args)
+        res = security.request(chat_id, name, args, desc)
+        if not res.get("ok"):
+            return {"estado": "error", "mensaje": res.get("msg", "No pude pedir verificación.")}
+        return {
+            "estado": "pendiente_de_codigo",
+            "accion": desc,
+            "instruccion": ("He enviado un código de verificación al correo del dueño. Dile que "
+                            "pegue aquí ese código para confirmar. NO afirmes que ya está hecho."),
+        }
+    # Lectura -> directo.
     d = _dashboard()
     if name == "ventas_stats":
         return d.stats(args.get("month", ""))
@@ -67,6 +124,30 @@ def _dispatch_tool(name: str, args: dict):
     if name == "productos":
         return d.products()
     return {"error": f"herramienta desconocida: {name}"}
+
+
+def execute_pending(action_type: str, payload: dict) -> str:
+    """Ejecuta DE VERDAD una acción ya verificada por OTP. Solo se llama desde bot.py tras verificar."""
+    d = _dashboard()
+    try:
+        if action_type == "crear_producto":
+            r = d.create_product(payload.get("name", ""), float(payload.get("price", 0)),
+                                 bool(payload.get("in_stock", True)))
+            return (f"✅ Producto creado: «{payload.get('name', '')}» a {payload.get('price', '?')}€."
+                    if r.get("ok") else f"❌ No se pudo crear el producto: {r.get('error', r)}")
+        if action_type == "guardar_factura":
+            r = d.add_expense(payload.get("date", ""), payload.get("concept", ""),
+                              float(payload.get("amount", 0)), float(payload.get("vat", 0) or 0),
+                              payload.get("supplier", ""))
+            return (f"✅ Factura/gasto guardado: {payload.get('concept', '')} · {payload.get('amount', '?')}€."
+                    if r.get("ok") else f"❌ No se pudo guardar la factura: {r.get('error', r)}")
+        if action_type == "enviar_campania":
+            r = d.send_campaign(payload.get("subject", ""), payload.get("html", ""), "all")
+            return (f"✅ Correo enviado a {r.get('sent', 0)} de {r.get('total', 0)} contactos."
+                    if r.get("ok") else f"❌ No se pudo enviar la campaña: {r.get('error', r)}")
+    except Exception as e:
+        return f"❌ Error ejecutando la acción: {e}"
+    return "❌ Acción desconocida."
 
 ANALYST_PROMPT = (
     "Eres el analista de contenidos de la marca Celestial (CBD / e-commerce / marketing / finanzas). "
@@ -120,9 +201,9 @@ def _context_block(question: str):
     return "\n\n---\n\n".join(blocks), hits
 
 
-def _chat_with_tools(messages: list) -> str:
-    """Conversa con herramientas (Groq). Si el modelo pide consultar la tienda,
-    ejecuta la consulta real y vuelve a pedirle la respuesta final con esos datos."""
+def _chat_with_tools(messages: list, chat_id) -> str:
+    """Conversa con herramientas (Groq). Las de lectura se ejecutan; las de escritura
+    solo piden el código de verificación (la ejecución real va en bot.py tras verificar)."""
     global _groq
     if _groq is None:
         from groq import Groq
@@ -147,7 +228,7 @@ def _chat_with_tools(messages: list) -> str:
             args = json.loads(tc.function.arguments or "{}")
         except Exception:
             args = {}
-        result = _dispatch_tool(tc.function.name, args)
+        result = _dispatch_tool(tc.function.name, args, chat_id)
         messages.append({
             "role": "tool", "tool_call_id": tc.id,
             "content": json.dumps(result, ensure_ascii=False)[:8000],
@@ -158,7 +239,7 @@ def _chat_with_tools(messages: list) -> str:
     return resp.choices[0].message.content
 
 
-def ask(question: str, history: list | None = None) -> dict:
+def ask(question: str, history: list | None = None, chat_id=None) -> dict:
     """Responde conversando: memoria como contexto + historial + datos reales de la tienda."""
     context, hits = _context_block(question)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -173,7 +254,7 @@ def ask(question: str, history: list | None = None) -> dict:
     if config.LLM_PROVIDER == "anthropic":
         answer = _chat(messages)
     else:
-        answer = _chat_with_tools(messages)
+        answer = _chat_with_tools(messages, chat_id)
     return {"answer": answer, "sources": hits}
 
 
