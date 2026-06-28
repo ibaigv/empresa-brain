@@ -1,0 +1,10 @@
+services:
+  brain:
+    build: .
+    container_name: empresa-brain
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"        # API HTTP (para el conector MCP de Claude)
+    volumes:
+      - ./data:/app/data   # la base de conocimiento persiste aquí
