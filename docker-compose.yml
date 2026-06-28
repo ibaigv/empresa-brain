@@ -7,4 +7,5 @@ services:
     ports:
       - "8000:8000"        # API HTTP (para el conector MCP de Claude)
     volumes:
-      - ./data:/app/data   # la base de conocimiento persiste aquí
+      - ./data:/app/data    # la base de conocimiento persiste aquí
+      - ./brain:/app/brain  # código en vivo: ajustes sin rebuild (git pull + restart)

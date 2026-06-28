@@ -28,5 +28,11 @@ API_TOKEN = os.getenv("API_TOKEN", "")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 
-# Cuántos fragmentos de conocimiento se le pasan a Claude por pregunta
+# Cuántos fragmentos de conocimiento se le pasan al modelo por pregunta
 TOP_K = int(os.getenv("TOP_K", "6"))
+
+# Modelo de transcripción de vídeos/audios (Whisper de Groq: gratis y rápido)
+GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+
+# Cuántos turnos (ida + vuelta) de conversación recuerda el bot para poder debatir
+HISTORY_TURNS = int(os.getenv("HISTORY_TURNS", "8"))
