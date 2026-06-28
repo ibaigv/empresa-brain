@@ -20,6 +20,22 @@ def _client():
     return _groq
 
 
+def download_url(url: str, dest_dir: str) -> str:
+    """Descarga el vídeo/audio de un enlace (Instagram, TikTok, YouTube, X…) con yt-dlp."""
+    import yt_dlp
+
+    opts = {
+        "outtmpl": os.path.join(dest_dir, "dl.%(ext)s"),
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return ydl.prepare_filename(info)
+
+
 def extract_audio(src_path: str) -> str:
     """Convierte el vídeo/audio de entrada a un mp3 mono 16 kHz (ligero para Whisper)."""
     out = src_path + ".mp3"

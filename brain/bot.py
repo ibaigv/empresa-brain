@@ -14,6 +14,8 @@ Solo responde a los IDs autorizados (TELEGRAM_ALLOWED_IDS).
 """
 import asyncio
 import os
+import re
+import shutil
 import tempfile
 from collections import defaultdict, deque
 
@@ -30,6 +32,9 @@ from . import config, store, rag, media
 
 # Historial de conversación por chat (para poder debatir con contexto).
 HISTORY = defaultdict(lambda: deque(maxlen=config.HISTORY_TURNS * 2))
+
+# Detecta enlaces (reels de Instagram, TikTok, YouTube, X…) en los mensajes.
+URL_RE = re.compile(r"https?://\S+")
 
 
 def _authorized(update: Update) -> bool:
@@ -103,6 +108,9 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (update.message.text or "").strip()
     if not msg:
         return
+    link = URL_RE.search(msg)
+    if link:
+        return await process_link(update, link.group(0))
     cid = update.effective_chat.id
     hist = list(HISTORY[cid])
     await update.message.chat.send_action("typing")
@@ -111,6 +119,30 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     HISTORY[cid].append({"role": "user", "content": msg})
     HISTORY[cid].append({"role": "assistant", "content": answer})
     await update.message.reply_text(answer)
+
+
+async def process_link(update: Update, url: str):
+    """Enlace de reel/vídeo (Instagram, TikTok, YouTube, X…) -> baja, transcribe, valora y guarda."""
+    m = update.message
+    await m.reply_text("🔗 Recibido. Bajando el vídeo y transcribiendo…")
+    await m.chat.send_action("typing")
+    d = tempfile.mkdtemp()
+    try:
+        path = await asyncio.to_thread(media.download_url, url, d)
+        transcript = await asyncio.to_thread(media.transcribe, path)
+        if not transcript:
+            return await m.reply_text("No pude sacar transcripción de ese enlace.")
+        verdict = await asyncio.to_thread(rag.analyze_transcript, transcript)
+        note = f"[Vídeo analizado · {url}]\n{verdict}\n\n— Transcripción —\n{transcript}"
+        await asyncio.to_thread(store.add_note, note, "video")
+        await m.reply_text(verdict + "\n\n✅ Guardado en la memoria.")
+    except Exception as e:
+        await m.reply_text(
+            "No pude con ese enlace. Si es de Instagram puede que pida login o sea privado; "
+            f"prueba a descargar el vídeo y mandármelo como archivo.\n({e})"
+        )
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
